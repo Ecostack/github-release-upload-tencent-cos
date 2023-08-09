@@ -1,4 +1,5 @@
 .env
-AI-v*.zip
+*.zip
 github-release-upload-tencent
+github-release-upload-tencent-cos
 .idea

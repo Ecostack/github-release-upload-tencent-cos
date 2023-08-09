@@ -10,6 +10,7 @@ import (
 	"github.com/tencentyun/cos-go-sdk-v5"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,7 +18,26 @@ import (
 	"time"
 )
 
+func getHttpClient() *http.Client {
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second, // Connect timeout
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		Proxy:                 http.ProxyFromEnvironment,
+		ResponseHeaderTimeout: 5 * time.Second, // Read timeout
+	}
+	client := &http.Client{
+		Timeout:   60 * time.Second, // Overall request timeout
+		Transport: transport,
+	}
+
+	return client
+}
+
 func downloadFile(url, filename, token string) error {
+	client := getHttpClient()
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -26,7 +46,7 @@ func downloadFile(url, filename, token string) error {
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
 	req.Header.Set("Accept", "application/octet-stream")
 
-	response, err := http.DefaultClient.Do(req)
+	response, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -129,6 +149,8 @@ type ResponseBody struct {
 }
 
 func downloadLatestAssets(owner, repo, token string) error {
+	client := getHttpClient()
+
 	// Get the latest release information
 	urlStr := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
 	req, err := http.NewRequest("GET", urlStr, nil)
@@ -138,7 +160,7 @@ func downloadLatestAssets(owner, repo, token string) error {
 
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
 
-	response, err := http.DefaultClient.Do(req)
+	response, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -151,7 +173,6 @@ func downloadLatestAssets(owner, repo, token string) error {
 	var releaseData ResponseBody
 
 	b, err := io.ReadAll(response.Body)
-	// b, err := ioutil.ReadAll(resp.Body)  Go.1.15 and earlier
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -182,15 +203,20 @@ func downloadLatestAssets(owner, repo, token string) error {
 
 		err = downloadFileFromGithub(owner, repo, strconv.FormatInt(int64(asset.Id), 10), token, assetName)
 		if err != nil {
-			log.Printf("Failed to download %s. Error: %s\n", assetName, err.Error())
+			log.Fatalf("Failed to download %s. Error: %s\n", assetName, err.Error())
 		}
 		err = uploadFileToTencentCOS(assetName)
 		if err != nil {
-			log.Printf("Failed to upload %s. Error: %s\n", assetName, err.Error())
+			log.Fatalf("Failed to upload %s. Error: %s\n", assetName, err.Error())
 		}
 
 		newUrl := getTencentCOSURL(assetName)
 		sendMessageInDiscord("New Release :> " + newUrl)
+
+		err = os.Remove(assetName)
+		if err != nil {
+			log.Fatalln("Error deleting file:", err)
+		}
 	}
 
 	return nil

@@ -1,4 +1,4 @@
-module github-release-upload-tencent
+module github-release-upload-tencent-cos
 
 go 1.20
 
